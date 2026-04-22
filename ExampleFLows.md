@@ -1,50 +1,4 @@
-Deliverables: 
-
-8 API endpoints that we can connect to 
-
-3 Example Flows of how our software works (basically – user stories translated to API calls) 
-
- 
-
-API Endpoints: 
-
-Buy 
-
-The user requests to make a purchase (POST /orders/buy/request) 
-
-There also is an affirmation of that purchase (POST /order/buy/confirm) 
-
-Sell 
-
-User requests to sell a stock (POST /orders/sell/request) 
-
-User confirms sale of stock (POST /orders/sell/confirm) 
-
-View Portfolio 
-
-There should be a call where users can see what inventory of stocks that they have (GET /portfolio) 
-
-View a Single Stock 
-
-Users can look at an individual simulated stock (company or index fund) (GET /stock/{id}) 
-
-Market / Stocks 
-
-Users can view all available stocks (GET /market) 
-
-Orders 
-
-View all orders (GET /orders) 
-
-Account 
-
-View account details (GET /account) 
-
- 
-
 Example Flow: 
-
- 
 
 Purchasing Stock Example Flow 
 
@@ -62,7 +16,6 @@ Call POST /orders/buy/confirm to complete the purchase and add stock to inventor
 
 Call GET /portfolio to see the stocks added to his portfolio along with its value 
 
- 
 
 Selling Stock Example Flow 
 
@@ -79,7 +32,6 @@ Call POST /orders/sell/confirm to complete the purchase, removing stock from inv
 Call GET /account to see updated funds 
 
 Call GET /orders to see the transaction details 
-
  
 
 Viewing and Researching a Stock Example Flow 
@@ -93,4 +45,3 @@ Call GET /stocks/TSLA to open Tesla and see specific details
 Call GET /account to review his funds 
 
 Call GET /portfolio to compare with his other stocks 
-
