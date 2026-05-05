@@ -63,11 +63,15 @@ def upgrade() -> None:
         sa.Column("portfolio_name", sa.String, nullable=False),
     )
 
-    op.execute(sa.text("INSERT INTO user_table (name, email) VALUES ('admin, admin@admin.com')"))
+    op.execute(sa.text("INSERT INTO user_table (name, email) VALUES ('admin', 'admin@admin.com')"))
     pass
 
 
 def downgrade() -> None:
-    """Downgrade schema."""
-    op.execute(sa.text("DROP TABLE user_table, portfolio_table, asset_table, holdings_table, trasnaction_table"))
-    pass
+    op.drop_table("transaction_table")
+    op.drop_table("holdings_table")
+    op.drop_table("asset_table")
+    op.drop_table("portfolio_table")
+    op.drop_table("user_table")
+
+    
