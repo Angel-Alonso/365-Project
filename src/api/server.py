@@ -1,5 +1,4 @@
 from fastapi import FastAPI
-from src.api import carts, catalog, bottler, barrels, admin, info, inventory
 from starlette.middleware.cors import CORSMiddleware
 
 description = """
