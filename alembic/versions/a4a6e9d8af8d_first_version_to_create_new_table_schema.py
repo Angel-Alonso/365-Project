@@ -24,14 +24,14 @@ def upgrade() -> None:
 
     op.create_table(
         "user_table",
-        sa.Column("id", sa.Integer, sa.Identity, primary_key=True, autoincrement=True),
+        sa.Column("id", sa.Integer, sa.Identity(), primary_key=True, autoincrement=True),
         sa.Column("name", sa.String, nullable=False),
         sa.Column("email", sa.String, nullable=False),
     )
 
     op.create_table(
         "portfolio_table",
-        sa.Column("portfolio_id", sa.Integer, sa.Identity, primary_key=True, autoincrement=True),
+        sa.Column("portfolio_id", sa.Integer, sa.Identity(), primary_key=True, autoincrement=True),
         sa.Column("user_id", sa.Integer, nullable=False),
         sa.Column("portfolio_name", sa.String, nullable=False),
         sa.Column("date_created", sa.DateTime, server_default='now()'),
@@ -39,7 +39,7 @@ def upgrade() -> None:
     
     op.create_table(
         "asset_table",
-        sa.Column("stock_id", sa.Integer, sa.Identity, primary_key=True, autoincrement=True),
+        sa.Column("stock_id", sa.Integer, sa.Identity(), primary_key=True, autoincrement=True),
         sa.Column("stock_name", sa.String, nullable=False),
         sa.Column("quantity", sa.Integer, nullable=False), # I'm not sure that this value makes sense here. Would it be the number of stocks that exist in the ecosystem?
         sa.Column("price", sa.Integer, nullable=False),
@@ -47,14 +47,15 @@ def upgrade() -> None:
 
     op.create_table(
         "holdings_table",
-        sa.Column("holdings_id", sa.Integer, sa.Identity, primary_key=True, autoincrement=True),
-        sa.Column("portfolio_id", sa.Integer, nullable=False),
+        sa.Column("holdings_id", sa.Integer, sa.Identity(), primary_key=True, autoincrement=True),
+        sa.Column("stock_id", sa.Integer, sa.ForeignKey("asset_table.stock_id"), nullable=False),
+        sa.Column("portfolio_id", sa.Integer, sa.ForeignKey("portfolio_table.portfolio_id"), nullable=False),
         sa.Column("quantity", sa.Integer, nullable=False),
     )
 
     op.create_table(
         "transaction_table",
-        sa.Column("transaction_id", sa.Integer, sa.Identity, primary_key=True, autoincrement=True),
+        sa.Column("transaction_id", sa.Integer, sa.Identity(), primary_key=True, autoincrement=True),
         sa.Column("portfolio_id", sa.Integer, nullable=False),
         sa.Column("stock_id", sa.Integer, nullable=False),
         sa.Column("time_traded", sa.DateTime, server_default='now()'),
