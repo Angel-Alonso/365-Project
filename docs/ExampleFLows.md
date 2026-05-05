@@ -1,6 +1,6 @@
 Example Flow: 
 
-V1 Minimal Workflow (Implemented)
+Simple Purchasing Flow for V1
 
 Buy Stock + View Portfolio
 
