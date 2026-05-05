@@ -47,6 +47,29 @@ def create_Stock_plan(
     # return an empty list
     return []
 
+def create_account(
+    name: str,
+    email: str,
+    ):
+    # Check if account with email already exists in the database
+    with db.engine.begin() as connection:
+        connection.execute(
+            sqlalchemy.text("""
+                SELECT * FROM user_table WHERE email = :email      
+                """),
+            
+                {
+                    "email": email
+                }
+            ,
+        )
+    print(
+        f"Creating account with name: {name} and email: {email}"
+    )
+
+    # return true if account creation is successful, false otherwise
+    return True
+
 
 @router.post("/plan", response_model=List[StockOrder])
 def get_wholesale_purchase_plan(wholesale_catalog: List[Stock]):
