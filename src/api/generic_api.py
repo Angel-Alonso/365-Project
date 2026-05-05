@@ -34,48 +34,46 @@ class PortfolioResponse(BaseModel):
     portfolio_name: str
     holdings: List[PortfolioHolding]
 
+class BuyConfirmRequest(BaseModel):
+    portfolio_id: int = Field(gt=0)
+    stock_id: int = Field(gt=0)
+    quantity: int = Field(gt=0)
 
-@router.get("/portfolio", response_model=PortfolioResponse)
-def get_portfolio(portfolio_id: int = 1):
-    """
-    Return a single portfolio and its holdings.
 
-    V1 simplification: defaults to portfolio_id=1 unless a different id is provided.
-    """
-    with db.engine.begin() as connection:
-        portfolio_row = connection.execute(
-            sqlalchemy.text(
-                """
-                SELECT portfolio_id, user_id, portfolio_name
-                FROM portfolio_table
-                WHERE portfolio_id = :portfolio_id
-                """
-            ),
-            {"portfolio_id": portfolio_id},
-        ).mappings().one_or_none()
+def get_portfolio(connection: sqlalchemy.Connection, portfolio_id: int) -> dict:
+    portfolio_row = connection.execute(
+        sqlalchemy.text(
+            """
+            SELECT portfolio_id, user_id, portfolio_name
+            FROM portfolio_table
+            WHERE portfolio_id = :portfolio_id
+            """
+        ),
+        {"portfolio_id": portfolio_id},
+    ).mappings().one_or_none()
 
-        if portfolio_row is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"portfolio_id {portfolio_id} not found",
-            )
+    if portfolio_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"portfolio_id {portfolio_id} not found",
+        )
 
-        holdings_rows = connection.execute(
-            sqlalchemy.text(
-                """
-                SELECT
-                    h.stock_id,
-                    a.stock_name,
-                    h.quantity,
-                    a.price
-                FROM holdings_table h
-                JOIN asset_table a ON a.stock_id = h.stock_id
-                WHERE h.portfolio_id = :portfolio_id
-                ORDER BY a.stock_name ASC
-                """
-            ),
-            {"portfolio_id": portfolio_id},
-        ).mappings().all()
+    holdings_rows = connection.execute(
+        sqlalchemy.text(
+            """
+            SELECT
+                h.stock_id,
+                a.stock_name,
+                h.quantity,
+                a.price
+            FROM holdings_table h
+            JOIN asset_table a ON a.stock_id = h.stock_id
+            WHERE h.portfolio_id = :portfolio_id
+            ORDER BY a.stock_name ASC
+            """
+        ),
+        {"portfolio_id": portfolio_id},
+    ).mappings().all()
 
     return {
         "portfolio_id": int(portfolio_row["portfolio_id"]),
@@ -91,6 +89,112 @@ def get_portfolio(portfolio_id: int = 1):
             for r in holdings_rows
         ],
     }
+
+
+@router.post("/orders/buy/confirm", response_model=PortfolioResponse, tags=["portfolio"])
+def post_orders_buy_confirm(req: BuyConfirmRequest):
+    """
+    V1 "write" endpoint: adds shares to a portfolio and records a transaction.
+    """
+    with db.engine.begin() as connection:
+        stock_row = connection.execute(
+            sqlalchemy.text(
+                """
+                SELECT stock_id, stock_name
+                FROM asset_table
+                WHERE stock_id = :stock_id
+                """
+            ),
+            {"stock_id": req.stock_id},
+        ).mappings().one_or_none()
+
+        if stock_row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"stock_id {req.stock_id} not found",
+            )
+
+        portfolio_row = connection.execute(
+            sqlalchemy.text(
+                """
+                SELECT portfolio_id, portfolio_name
+                FROM portfolio_table
+                WHERE portfolio_id = :portfolio_id
+                """
+            ),
+            {"portfolio_id": req.portfolio_id},
+        ).mappings().one_or_none()
+
+        if portfolio_row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"portfolio_id {req.portfolio_id} not found",
+            )
+
+        existing_holding = connection.execute(
+            sqlalchemy.text(
+                """
+                SELECT holdings_id, quantity
+                FROM holdings_table
+                WHERE portfolio_id = :portfolio_id AND stock_id = :stock_id
+                """
+            ),
+            {"portfolio_id": req.portfolio_id, "stock_id": req.stock_id},
+        ).mappings().one_or_none()
+
+        if existing_holding is None:
+            connection.execute(
+                sqlalchemy.text(
+                    """
+                    INSERT INTO holdings_table (stock_id, portfolio_id, quantity)
+                    VALUES (:stock_id, :portfolio_id, :quantity)
+                    """
+                ),
+                {
+                    "stock_id": req.stock_id,
+                    "portfolio_id": req.portfolio_id,
+                    "quantity": req.quantity,
+                },
+            )
+        else:
+            connection.execute(
+                sqlalchemy.text(
+                    """
+                    UPDATE holdings_table
+                    SET quantity = quantity + :quantity
+                    WHERE holdings_id = :holdings_id
+                    """
+                ),
+                {"quantity": req.quantity, "holdings_id": existing_holding["holdings_id"]},
+            )
+
+        connection.execute(
+            sqlalchemy.text(
+                """
+                INSERT INTO transaction_table (portfolio_id, stock_id, quantity, portfolio_name)
+                VALUES (:portfolio_id, :stock_id, :quantity, :portfolio_name)
+                """
+            ),
+            {
+                "portfolio_id": req.portfolio_id,
+                "stock_id": req.stock_id,
+                "quantity": req.quantity,
+                "portfolio_name": portfolio_row["portfolio_name"],
+            },
+        )
+
+        return get_portfolio(connection, portfolio_id=req.portfolio_id)
+
+
+@router.get("/portfolio", response_model=PortfolioResponse)
+def get_portfolio_endpoint(portfolio_id: int = 1):
+    """
+    Return a single portfolio and its holdings.
+
+    V1 simplification: defaults to portfolio_id=1 unless a different id is provided.
+    """
+    with db.engine.begin() as connection:
+        return get_portfolio(connection, portfolio_id=portfolio_id)
 
 
 @router.post("/stocks/deliver/{order_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["stocks"])

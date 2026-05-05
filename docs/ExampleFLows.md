@@ -1,5 +1,12 @@
 Example Flow: 
 
+V1 Minimal Workflow (Implemented)
+
+Buy Stock + View Portfolio
+
+1. Call POST /orders/buy/confirm with a portfolio_id, stock_id, and quantity to add shares to a portfolio.
+2. Call GET /portfolio?portfolio_id=<id> to verify the holdings updated.
+
 Purchasing Stock Example Flow 
 
 Dave has come to our application because he wants to get into stocks and after a little bit of looking around at the available stocks decides to purchase 10 Apple stocks. To do this: 
