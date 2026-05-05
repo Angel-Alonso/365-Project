@@ -10,9 +10,7 @@ config = context.config
 # Load DB URI from environment and override config
 config.set_main_option(
     "sqlalchemy.url",
-    os.getenv(
-        "POSTGRES_URI", "postgresql+psycopg://myuser:mypassword@localhost/mydatabase"
-    ),
+    os.getenv("POSTGRES_URI", "postgresql+psycopg://myuser:mypassword@localhost:5433/mydatabase"),
 )
 
 # Set up logging
