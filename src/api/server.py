@@ -1,56 +1,39 @@
 from fastapi import FastAPI
+from src.api import generic_api
 from starlette.middleware.cors import CORSMiddleware
 
 description = """
-Central Coast Cauldrons is the premier ecommerce site for all your alchemical desires.
+Stock Portfolio API for paper-trading and portfolio tracking.
 """
 tags_metadata = [
-    {"name": "cart", "description": "Place potion orders."},
-    {"name": "catalog", "description": "View the available potions."},
-    {"name": "bottler", "description": "Bottle potions from the raw magical elixir."},
-    {
-        "name": "barrels",
-        "description": "Buy barrels of raw magical elixir for making potions.",
-    },
-    {"name": "admin", "description": "Where you reset the game state."},
-    {"name": "info", "description": "Get updates on time"},
-    {
-        "name": "inventory",
-        "description": "Get the current inventory of shop and buying capacity.",
-    },
+    {"name": "portfolio", "description": "View and manage a portfolio."},
+    {"name": "accounts", "description": "Create and view user accounts."},
+    {"name": "stocks", "description": "Market/stock lookup and holdings."},
 ]
 
 app = FastAPI(
-    title="Central Coast Cauldrons",
+    title="Stock Portfolio Service",
     description=description,
-    version="0.0.1",
-    terms_of_service="http://example.com/terms/",
+    version="0.1.0",
     contact={
-        "name": "Lucas Pierce",
-        "email": "lupierce@calpoly.edu",
+        "name": "CS365 Group Project",
     },
     openapi_tags=tags_metadata,
 )
 
-origins = ["https://potion-exchange.vercel.app"]
+origins = ["*"]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["GET", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# app.include_router(inventory.router)
-# app.include_router(carts.router)
-# app.include_router(catalog.router)
-# app.include_router(bottler.router)
-# app.include_router(barrels.router)
-# app.include_router(admin.router)
-# app.include_router(info.router)
+app.include_router(generic_api.router)
 
 
 @app.get("/")
 async def root():
-    return {"message": "Shop is open for business!"}
+    return {"message": "Stock portfolio service is running."}

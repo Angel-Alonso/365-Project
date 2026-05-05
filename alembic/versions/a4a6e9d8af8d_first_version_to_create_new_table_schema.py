@@ -13,15 +13,13 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'a4a6e9d8af8d'
-down_revision: Union[str, None] = 'e91d0c24f7d0'
+down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
     """Upgrade schema."""
-    op.drop_table("global_inventory")
-
     op.create_table(
         "user_table",
         sa.Column("id", sa.Integer, sa.Identity(), primary_key=True, autoincrement=True),
@@ -41,7 +39,6 @@ def upgrade() -> None:
         "asset_table",
         sa.Column("stock_id", sa.Integer, sa.Identity(), primary_key=True, autoincrement=True),
         sa.Column("stock_name", sa.String, nullable=False),
-        sa.Column("quantity", sa.Integer, nullable=False), # I'm not sure that this value makes sense here. Would it be the number of stocks that exist in the ecosystem?
         sa.Column("price", sa.Integer, nullable=False),
     )
 
@@ -63,8 +60,11 @@ def upgrade() -> None:
         sa.Column("portfolio_name", sa.String, nullable=False),
     )
 
+    # fake data so V1 has something to GET immediately
     op.execute(sa.text("INSERT INTO user_table (name, email) VALUES ('admin', 'admin@admin.com')"))
-    pass
+    op.execute(sa.text("INSERT INTO portfolio_table (user_id, portfolio_name) VALUES (1, 'Default Portfolio')"))
+    op.execute(sa.text("INSERT INTO asset_table (stock_name, price) VALUES ('AAPL', 100), ('MSFT', 200)"))
+    op.execute(sa.text("INSERT INTO holdings_table (stock_id, portfolio_id, quantity) VALUES (1, 1, 10), (2, 1, 5)"))
 
 
 def downgrade() -> None:

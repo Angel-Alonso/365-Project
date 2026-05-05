@@ -20,15 +20,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "global_inventory",
-        sa.Column("id", sa.Integer, primary_key=True),
-        sa.Column("gold", sa.Integer, nullable=False),
-        sa.CheckConstraint("gold >= 0", name="check_gold_positive"),
-    )
-
-    op.execute(sa.text("INSERT INTO global_inventory (gold) VALUES (100)"))
+    # Potion-shop leftover migration (intentionally a no-op for the stock portfolio app).
+    pass
 
 
 def downgrade():
-    op.drop_table("global_inventory")
+    pass
