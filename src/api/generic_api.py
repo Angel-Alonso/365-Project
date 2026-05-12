@@ -21,6 +21,20 @@ class StockOrder(BaseModel):
     name: str
     quantity: int = Field(gt=0, description="Quantity must be greater than 0")
 
+
+class StockResponse(BaseModel):
+    ticker: str
+    company_name: str
+    price: int = Field(ge=0, description="Price must be non-negative")
+
+
+class AccountResponse(BaseModel):
+    user_id: int
+    name: str
+    email: str
+    cash_balance: int
+
+
 class PortfolioHolding(BaseModel):
     stock_id: int
     stock_name: str
@@ -38,6 +52,178 @@ class BuyConfirmRequest(BaseModel):
     portfolio_id: int = Field(gt=0)
     stock_id: int = Field(gt=0)
     quantity: int = Field(gt=0)
+
+
+class TradeRequest(BaseModel):
+    portfolio_id: int = Field(gt=0)
+    ticker: str
+    quantity: int = Field(gt=0)
+
+
+STARTING_CASH_BALANCE = 10000
+DEFAULT_MARKET_DATA = {
+    "AAPL": {"stock_id": 1, "company_name": "Apple Inc.", "price": 100},
+    "MSFT": {"stock_id": 2, "company_name": "Microsoft Corporation", "price": 200},
+    "TSLA": {"stock_id": 3, "company_name": "Tesla Inc.", "price": 250},
+}
+
+
+def normalize_ticker(ticker: str) -> str:
+    return ticker.strip().upper()
+
+
+def get_company_name(ticker: str) -> str:
+    return DEFAULT_MARKET_DATA.get(ticker, {}).get("company_name", ticker)
+
+
+def table_exists(connection: sqlalchemy.Connection, table_name: str) -> bool:
+    row = connection.execute(
+        sqlalchemy.text("SELECT to_regclass(:table_name) IS NOT NULL AS exists"),
+        {"table_name": table_name},
+    ).mappings().one()
+
+    return bool(row["exists"])
+
+
+def get_stock_from_asset_table(connection: sqlalchemy.Connection, ticker: str) -> dict | None:
+    row = connection.execute(
+        sqlalchemy.text(
+            """
+            SELECT stock_id, stock_name, price
+            FROM asset_table
+            WHERE UPPER(stock_name) = :ticker
+            """
+        ),
+        {"ticker": ticker},
+    ).mappings().one_or_none()
+
+    if row is None:
+        return None
+
+    return {
+        "stock_id": int(row["stock_id"]),
+        "ticker": str(row["stock_name"]).upper(),
+        "company_name": get_company_name(str(row["stock_name"]).upper()),
+        "price": int(row["price"]),
+    }
+
+
+def get_stock_from_price_tables(connection: sqlalchemy.Connection, ticker: str) -> dict | None:
+    if not table_exists(connection, "stocks") or not table_exists(connection, "stock_prices"):
+        return None
+
+    row = connection.execute(
+        sqlalchemy.text(
+            """
+            SELECT s.stock_id, s.ticker, s.company_name, sp.price
+            FROM stocks s
+            JOIN stock_prices sp ON s.ticker = sp.ticker
+            WHERE UPPER(s.ticker) = :ticker
+            ORDER BY sp.recorded_at DESC
+            LIMIT 1
+            """
+        ),
+        {"ticker": ticker},
+    ).mappings().one_or_none()
+
+    if row is None:
+        return None
+
+    return {
+        "stock_id": int(row["stock_id"]),
+        "ticker": str(row["ticker"]).upper(),
+        "company_name": str(row["company_name"]),
+        "price": int(row["price"]),
+    }
+
+
+def get_stock_by_ticker(connection: sqlalchemy.Connection, ticker: str) -> dict:
+    normalized_ticker = normalize_ticker(ticker)
+    stock = get_stock_from_asset_table(connection, normalized_ticker)
+
+    if stock is None:
+        stock = get_stock_from_price_tables(connection, normalized_ticker)
+
+    if stock is None and normalized_ticker in DEFAULT_MARKET_DATA:
+        default_stock = DEFAULT_MARKET_DATA[normalized_ticker]
+        stock = {
+            "stock_id": int(default_stock["stock_id"]),
+            "ticker": normalized_ticker,
+            "company_name": str(default_stock["company_name"]),
+            "price": int(default_stock["price"]),
+        }
+
+    if stock is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"ticker {normalized_ticker} not found",
+        )
+
+    return stock
+
+
+def get_stock_by_id(connection: sqlalchemy.Connection, stock_id: int) -> dict:
+    row = connection.execute(
+        sqlalchemy.text(
+            """
+            SELECT stock_id, stock_name, price
+            FROM asset_table
+            WHERE stock_id = :stock_id
+            """
+        ),
+        {"stock_id": stock_id},
+    ).mappings().one_or_none()
+
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"stock_id {stock_id} not found",
+        )
+
+    ticker = str(row["stock_name"]).upper()
+    return {
+        "stock_id": int(row["stock_id"]),
+        "ticker": ticker,
+        "company_name": get_company_name(ticker),
+        "price": int(row["price"]),
+    }
+
+
+def get_cash_balance(connection: sqlalchemy.Connection, portfolio_id: int) -> int:
+    row = connection.execute(
+        sqlalchemy.text(
+            """
+            SELECT COALESCE(SUM(t.quantity * a.price), 0) AS total_spent
+            FROM transaction_table t
+            JOIN asset_table a ON a.stock_id = t.stock_id
+            WHERE t.portfolio_id = :portfolio_id
+            """
+        ),
+        {"portfolio_id": portfolio_id},
+    ).mappings().one()
+
+    return STARTING_CASH_BALANCE - int(row["total_spent"])
+
+
+def ensure_portfolio_exists(connection: sqlalchemy.Connection, portfolio_id: int) -> dict:
+    portfolio_row = connection.execute(
+        sqlalchemy.text(
+            """
+            SELECT portfolio_id, user_id, portfolio_name
+            FROM portfolio_table
+            WHERE portfolio_id = :portfolio_id
+            """
+        ),
+        {"portfolio_id": portfolio_id},
+    ).mappings().one_or_none()
+
+    if portfolio_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"portfolio_id {portfolio_id} not found",
+        )
+
+    return dict(portfolio_row)
 
 
 def get_portfolio(connection: sqlalchemy.Connection, portfolio_id: int) -> dict:
@@ -89,6 +275,145 @@ def get_portfolio(connection: sqlalchemy.Connection, portfolio_id: int) -> dict:
             for r in holdings_rows
         ],
     }
+
+
+@router.get("/market", response_model=List[StockResponse], tags=["stocks"])
+def get_market():
+    """
+    Return the current stock market list used by the sample workflows.
+    """
+    with db.engine.begin() as connection:
+        market_by_ticker = {}
+        asset_rows = connection.execute(
+            sqlalchemy.text(
+                """
+                SELECT stock_id, stock_name, price
+                FROM asset_table
+                ORDER BY stock_id ASC
+                """
+            )
+        ).mappings().all()
+
+        for row in asset_rows:
+            ticker = str(row["stock_name"]).upper()
+            market_by_ticker[ticker] = {
+                "ticker": ticker,
+                "company_name": get_company_name(ticker),
+                "price": int(row["price"]),
+            }
+
+        if table_exists(connection, "stocks") and table_exists(connection, "stock_prices"):
+            stock_rows = connection.execute(
+                sqlalchemy.text(
+                    """
+                    SELECT DISTINCT ON (s.ticker)
+                        s.ticker,
+                        s.company_name,
+                        sp.price
+                    FROM stocks s
+                    JOIN stock_prices sp ON s.ticker = sp.ticker
+                    ORDER BY s.ticker, sp.recorded_at DESC
+                    """
+                )
+            ).mappings().all()
+
+            for row in stock_rows:
+                ticker = str(row["ticker"]).upper()
+                market_by_ticker[ticker] = {
+                    "ticker": ticker,
+                    "company_name": str(row["company_name"]),
+                    "price": int(row["price"]),
+                }
+
+        for ticker, default_stock in DEFAULT_MARKET_DATA.items():
+            market_by_ticker.setdefault(
+                ticker,
+                {
+                    "ticker": ticker,
+                    "company_name": str(default_stock["company_name"]),
+                    "price": int(default_stock["price"]),
+                },
+            )
+
+        return [market_by_ticker[ticker] for ticker in sorted(market_by_ticker)]
+
+
+@router.get("/stocks/{ticker}", response_model=StockResponse, tags=["stocks"])
+def get_stock(ticker: str):
+    """
+    Return the latest known price for one stock ticker.
+    """
+    with db.engine.begin() as connection:
+        stock = get_stock_by_ticker(connection, ticker)
+
+    return {
+        "ticker": stock["ticker"],
+        "company_name": stock["company_name"],
+        "price": stock["price"],
+    }
+
+
+@router.get("/account", response_model=AccountResponse, tags=["accounts"])
+def get_account(user_id: int = 1):
+    """
+    Return account information and computed cash balance.
+    """
+    with db.engine.begin() as connection:
+        account_row = connection.execute(
+            sqlalchemy.text(
+                """
+                SELECT u.id, u.name, u.email, p.portfolio_id
+                FROM user_table u
+                LEFT JOIN portfolio_table p ON p.user_id = u.id
+                WHERE u.id = :user_id
+                ORDER BY p.portfolio_id ASC
+                LIMIT 1
+                """
+            ),
+            {"user_id": user_id},
+        ).mappings().one_or_none()
+
+        if account_row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"user_id {user_id} not found",
+            )
+
+        portfolio_id = account_row["portfolio_id"]
+        cash_balance = (
+            get_cash_balance(connection, int(portfolio_id))
+            if portfolio_id is not None
+            else STARTING_CASH_BALANCE
+        )
+
+        return {
+            "user_id": int(account_row["id"]),
+            "name": str(account_row["name"]),
+            "email": str(account_row["email"]),
+            "cash_balance": cash_balance,
+        }
+
+
+@router.post("/orders/buy/request", tags=["portfolio"])
+def post_orders_buy_request(req: TradeRequest):
+    """
+    Preview whether a buy order can be placed.
+    """
+    with db.engine.begin() as connection:
+        ensure_portfolio_exists(connection, req.portfolio_id)
+        stock = get_stock_by_ticker(connection, req.ticker)
+        estimated_total = stock["price"] * req.quantity
+        cash_balance = get_cash_balance(connection, req.portfolio_id)
+
+        return {
+            "portfolio_id": req.portfolio_id,
+            "ticker": stock["ticker"],
+            "company_name": stock["company_name"],
+            "quantity": req.quantity,
+            "price": stock["price"],
+            "estimated_total": estimated_total,
+            "can_purchase": cash_balance >= estimated_total,
+        }
 
 
 @router.post("/orders/buy/confirm", response_model=PortfolioResponse, tags=["portfolio"])
@@ -186,6 +511,151 @@ def post_orders_buy_confirm(req: BuyConfirmRequest):
         return get_portfolio(connection, portfolio_id=req.portfolio_id)
 
 
+@router.post("/orders/sell/request", tags=["portfolio"])
+def post_orders_sell_request(req: TradeRequest):
+    """
+    Preview whether a sell order can be placed.
+    """
+    with db.engine.begin() as connection:
+        ensure_portfolio_exists(connection, req.portfolio_id)
+        stock = get_stock_by_ticker(connection, req.ticker)
+        holding_row = connection.execute(
+            sqlalchemy.text(
+                """
+                SELECT quantity
+                FROM holdings_table
+                WHERE portfolio_id = :portfolio_id AND stock_id = :stock_id
+                """
+            ),
+            {"portfolio_id": req.portfolio_id, "stock_id": stock["stock_id"]},
+        ).mappings().one_or_none()
+
+        current_quantity = int(holding_row["quantity"]) if holding_row is not None else 0
+        estimated_total = stock["price"] * req.quantity
+
+        return {
+            "portfolio_id": req.portfolio_id,
+            "ticker": stock["ticker"],
+            "company_name": stock["company_name"],
+            "quantity": req.quantity,
+            "price": stock["price"],
+            "estimated_total": estimated_total,
+            "can_sell": current_quantity >= req.quantity,
+        }
+
+
+@router.post("/orders/sell/confirm", response_model=PortfolioResponse, tags=["portfolio"])
+def post_orders_sell_confirm(req: BuyConfirmRequest):
+    """
+    Remove shares from a portfolio and record the sell transaction.
+    """
+    with db.engine.begin() as connection:
+        portfolio_row = ensure_portfolio_exists(connection, req.portfolio_id)
+        get_stock_by_id(connection, req.stock_id)
+
+        holding_row = connection.execute(
+            sqlalchemy.text(
+                """
+                SELECT holdings_id, quantity
+                FROM holdings_table
+                WHERE portfolio_id = :portfolio_id AND stock_id = :stock_id
+                """
+            ),
+            {"portfolio_id": req.portfolio_id, "stock_id": req.stock_id},
+        ).mappings().one_or_none()
+
+        if holding_row is None or int(holding_row["quantity"]) < req.quantity:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Not enough shares to sell",
+            )
+
+        remaining_quantity = int(holding_row["quantity"]) - req.quantity
+
+        if remaining_quantity == 0:
+            connection.execute(
+                sqlalchemy.text(
+                    """
+                    DELETE FROM holdings_table
+                    WHERE holdings_id = :holdings_id
+                    """
+                ),
+                {"holdings_id": holding_row["holdings_id"]},
+            )
+        else:
+            connection.execute(
+                sqlalchemy.text(
+                    """
+                    UPDATE holdings_table
+                    SET quantity = :quantity
+                    WHERE holdings_id = :holdings_id
+                    """
+                ),
+                {
+                    "quantity": remaining_quantity,
+                    "holdings_id": holding_row["holdings_id"],
+                },
+            )
+
+        connection.execute(
+            sqlalchemy.text(
+                """
+                INSERT INTO transaction_table (portfolio_id, stock_id, quantity, portfolio_name)
+                VALUES (:portfolio_id, :stock_id, :quantity, :portfolio_name)
+                """
+            ),
+            {
+                "portfolio_id": req.portfolio_id,
+                "stock_id": req.stock_id,
+                "quantity": -req.quantity,
+                "portfolio_name": portfolio_row["portfolio_name"],
+            },
+        )
+
+        return get_portfolio(connection, portfolio_id=req.portfolio_id)
+
+
+@router.get("/orders", tags=["portfolio"])
+def get_orders(portfolio_id: int = 1):
+    """
+    Return transaction history for a portfolio.
+    """
+    with db.engine.begin() as connection:
+        ensure_portfolio_exists(connection, portfolio_id)
+        order_rows = connection.execute(
+            sqlalchemy.text(
+                """
+                SELECT
+                    t.transaction_id,
+                    t.portfolio_id,
+                    t.stock_id,
+                    a.stock_name,
+                    t.quantity,
+                    a.price
+                FROM transaction_table t
+                JOIN asset_table a ON a.stock_id = t.stock_id
+                WHERE t.portfolio_id = :portfolio_id
+                ORDER BY t.transaction_id ASC
+                """
+            ),
+            {"portfolio_id": portfolio_id},
+        ).mappings().all()
+
+        return [
+            {
+                "transaction_id": int(row["transaction_id"]),
+                "portfolio_id": int(row["portfolio_id"]),
+                "stock_id": int(row["stock_id"]),
+                "ticker": str(row["stock_name"]).upper(),
+                "transaction_type": "SELL" if int(row["quantity"]) < 0 else "BUY",
+                "quantity": abs(int(row["quantity"])),
+                "price": int(row["price"]),
+                "total": abs(int(row["quantity"])) * int(row["price"]),
+            }
+            for row in order_rows
+        ]
+
+
 @router.get("/portfolio", response_model=PortfolioResponse)
 def get_portfolio_endpoint(portfolio_id: int = 1):
     """
@@ -224,19 +694,29 @@ def create_account(
     ):
     # Check if account with email already exists in the database
     with db.engine.begin() as connection:
+        existing_account = connection.execute(
+            sqlalchemy.text(
+                """
+                SELECT id
+                FROM user_table
+                WHERE email = :email
+                """
+            ),
+            {"email": email},
+        ).mappings().one_or_none()
+
+        if existing_account is not None:
+            return False
+
         connection.execute(
-            sqlalchemy.text("""
-                SELECT * FROM user_table WHERE email = :email      
-                """),
-            
-                {
-                    "email": email
-                }
-            ,
+            sqlalchemy.text(
+                """
+                INSERT INTO user_table (name, email)
+                VALUES (:name, :email)
+                """
+            ),
+            {"name": name, "email": email},
         )
-    print(
-        f"Creating account with name: {name} and email: {email}"
-    )
 
     # return true if account creation is successful, false otherwise
     return True
