@@ -3,5 +3,6 @@ venv
 .idea
 __pycache__
 /.env
+default.env
 info.log
 .DS_Store
