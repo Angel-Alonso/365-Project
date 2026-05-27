@@ -11,7 +11,7 @@ Sequence Diagram
 
 
 
-![Case 1 Sequence Diagram](Images/case_1.png)
+![Case 1 Sequence Diagram](../Images/case_1.png)
 
 
 
