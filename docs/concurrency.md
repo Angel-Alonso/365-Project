@@ -30,7 +30,7 @@ Sequence Diagram
 
 
 
-![Case 2 Sequence Diagram](Images/case_2.png)
+![Case 2 Sequence Diagram](../Images/case_2.png)
 
 This is non-repeatable read; the same row is read twice and returns different values because a transaction is committed between the two reads. The fix is to use a repeatable read isolation so the balance stays consistent during the check, making sure it doesn't change mid-transaction 
 
@@ -46,7 +46,7 @@ Sequence Diagram
 
 
 
-![Case 3 Sequence Diagram](Images/case_3.png)
+![Case 3 Sequence Diagram](../Images/case_3.png)
 
  
  
