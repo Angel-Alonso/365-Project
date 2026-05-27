@@ -78,6 +78,15 @@ class CreateAccountRequest(BaseModel):
     name: str
     email: str
 
+class LeaderBoradRanking(BaseModel):
+    ranking: int
+    user_id: int
+    name: str
+    portfolio_id: int
+    total_invested: float
+    portfolio_value: float
+    total_return_percentage: float
+
 
 
 STARTING_CASH_BALANCE = 10000
@@ -849,8 +858,45 @@ def get_portfolio_performance(portfolio_id: int):
             "holdings_performance": holding_list,
             }
 
+@router.get("/leaderboard", response_model=List[LeaderBoradRanking], tags=["accounts"])
+def get_leaderboard():
+      """Return a leaderboard of portfolios ranked by total return percentage."""
+      with db.engine.begin() as connection:
+          leaderboard_rows = connection.execute(sqlalchemy.text(
+                """
+                SELECT * FROM(
+                SELECT 
+                    p.portfolio_id,
+                    u.id AS user_id,
+                    u.name,
+                    COALESCE(SUM(CASE WHEN t.quantity > 0 THEN t.quantity * t.price_at_purchase ELSE 0 END), 0) AS total_invested,
+                    COALESCE(SUM(CASE WHEN t.quantity > 0 THEN t.quantity * a.price ELSE 0 END), 0) AS current_value
+                FROM portfolio_table p
+                JOIN user_table u ON u.id = p.user_id
+                LEFT JOIN transaction_table t ON t.portfolio_id = p.portfolio_id
+                LEFT JOIN asset_table a ON a.stock_id = t.stock_id
+                GROUP BY p.portfolio_id, u.id, u.name
+                )as subquery
+                ORDER BY (current_value - total_invested) / NULLIF(total_invested, 0) DESC
+                LIMIT 10
+                """
+            )).mappings().all()
+          leaderboard = []
+          for row in leaderboard_rows:
+                total_invested = float(row["total_invested"])
+                current_value = float(row["current_value"])
+                total_return_percentage = ((current_value - total_invested) / total_invested) * 100 if total_invested > 0 else 0
+                leaderboard.append({
+                    "ranking": len(leaderboard) + 1,
+                    "user_id": int(row["user_id"]),
+                    "name": str(row["name"]),
+                    "portfolio_id": int(row["portfolio_id"]),
+                    "total_invested": round(total_invested, 2),
+                    "portfolio_value": round(current_value, 2),
+                    "total_return_percentage": round(total_return_percentage, 2),
+                })
 
-      
+          return leaderboard
        
 
 
