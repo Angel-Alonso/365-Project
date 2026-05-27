@@ -47,4 +47,7 @@ Sequence Diagram
 
 
 ![Case 3 Sequence Diagram](Images/case_3.png)
+
+ 
+ 
  This is a non-repeatable read; the same row is read twice and returns different values because a transaction is committed between the two reads. The fix is to lock the price at the request time rather than reading it again and having the value change in between.This is the pattern e-commerce use and the one explained in class with the Amazon example. 
