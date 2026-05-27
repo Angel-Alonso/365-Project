@@ -31,3 +31,10 @@ View all orders (GET /orders)
 Account 
 
 View account details (GET /account) 
+
+complex end points
+
+Get/portfolio/{portfolio_id}/performance - 
+It calculates the average price paid for each stock using past trasactions, compares it to the current price and computes how much money was gain or lost per stock. 
+GET/leaderboard-
+It looks at every portfolio calculates how much each user has invested and what their current worth is. 
