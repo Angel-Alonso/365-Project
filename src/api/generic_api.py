@@ -5,7 +5,7 @@ from typing import List
 import sqlalchemy
 from src.api import auth
 from src import database as db
-
+from sqlalchemy.exc import SQLAlchemyError
 router = APIRouter(
     tags=["portfolio", "stocks", "accounts"],
     dependencies=[Depends(auth.get_api_key)],
@@ -59,6 +59,26 @@ class TradeRequest(BaseModel):
     ticker: str
     quantity: int = Field(gt=0)
 
+class HoldingPerformance(BaseModel):
+    ticker: str
+    quantity: int
+    average_cost: float
+    current_price: int
+    potential_gains_or_losses: float 
+    return_percentage: float
+
+class PortfolioPerformance(BaseModel):
+    portfolio_id: int
+    total_invested: float
+    current_value: float
+    total_return_percentage: float
+    holdings_performance: List[HoldingPerformance]
+
+class CreateAccountRequest(BaseModel):
+    name: str
+    email: str
+
+
 
 STARTING_CASH_BALANCE = 10000
 DEFAULT_MARKET_DATA = {
@@ -67,6 +87,50 @@ DEFAULT_MARKET_DATA = {
     "TSLA": {"stock_id": 3, "company_name": "Tesla Inc.", "price": 250},
 }
 
+@router.post("/accounts/create", tags=["accounts"])
+def post_create_account(req: CreateAccountRequest):
+    """
+    Create a new user account with the provided name and email.
+    """
+    with db.engine.begin() as connection:
+        existing_account = connection.execute(
+            sqlalchemy.text(
+                """
+                SELECT id
+                FROM user_table
+                WHERE email = :email
+                """ ),
+            {"email": req.email},
+        ).mappings().one_or_none()
+        if existing_account is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Account with email {req.email} already exists",
+            )
+        user_row = connection.execute(
+            sqlalchemy.text(  
+                """
+                INSERT INTO user_table (name, email)
+                VALUES (:name, :email)
+                RETURNING id
+                """            ),
+            {"name": req.name, "email": req.email},
+        ).mappings().one()
+        protfolio_row = connection.execute(
+            sqlalchemy.text(
+                """
+                INSERT INTO portfolio_table (user_id, portfolio_name)
+                VALUES (:user_id, :portfolio_name)
+                RETURNING portfolio_id
+                """
+            ),
+            {"user_id": user_row["id"], "portfolio_name": f"{req.name}'s Portfolio"},
+        ).mappings().one()
+    return {
+        "message": "Account created successfully",
+        "user_id": int(user_row["id"]),
+        "portfolio_id": int(protfolio_row["portfolio_id"])
+    }
 
 def normalize_ticker(ticker: str) -> str:
     return ticker.strip().upper()
@@ -282,60 +346,65 @@ def get_market():
     """
     Return the current stock market list used by the sample workflows.
     """
-    with db.engine.begin() as connection:
-        market_by_ticker = {}
-        asset_rows = connection.execute(
-            sqlalchemy.text(
-                """
-                SELECT stock_id, stock_name, price
-                FROM asset_table
-                ORDER BY stock_id ASC
-                """
-            )
-        ).mappings().all()
+    try:
+        with db.engine.begin() as connection:
+            market_by_ticker = {}
 
-        for row in asset_rows:
-            ticker = str(row["stock_name"]).upper()
-            market_by_ticker[ticker] = {
-                "ticker": ticker,
-                "company_name": get_company_name(ticker),
-                "price": int(row["price"]),
-            }
-
-        if table_exists(connection, "stocks") and table_exists(connection, "stock_prices"):
-            stock_rows = connection.execute(
+            asset_rows = connection.execute(
                 sqlalchemy.text(
                     """
-                    SELECT DISTINCT ON (s.ticker)
-                        s.ticker,
-                        s.company_name,
-                        sp.price
-                    FROM stocks s
-                    JOIN stock_prices sp ON s.ticker = sp.ticker
-                    ORDER BY s.ticker, sp.recorded_at DESC
+                    SELECT stock_id, stock_name, price
+                    FROM asset_table
+                    ORDER BY stock_id ASC
                     """
                 )
             ).mappings().all()
 
-            for row in stock_rows:
-                ticker = str(row["ticker"]).upper()
+            for row in asset_rows:
+                ticker = str(row["stock_name"]).upper()
                 market_by_ticker[ticker] = {
                     "ticker": ticker,
-                    "company_name": str(row["company_name"]),
+                    "company_name": get_company_name(ticker),
                     "price": int(row["price"]),
                 }
 
-        for ticker, default_stock in DEFAULT_MARKET_DATA.items():
-            market_by_ticker.setdefault(
-                ticker,
-                {
-                    "ticker": ticker,
-                    "company_name": str(default_stock["company_name"]),
-                    "price": int(default_stock["price"]),
-                },
-            )
+            if table_exists(connection, "stocks") and table_exists(connection, "stock_prices"):
+                stock_rows = connection.execute(
+                    sqlalchemy.text(
+                        """
+                        SELECT DISTINCT ON (s.ticker)
+                            s.ticker,
+                            s.company_name,
+                            sp.price
+                        FROM stocks s
+                        JOIN stock_prices sp ON s.ticker = sp.ticker
+                        ORDER BY s.ticker, sp.recorded_at DESC
+                        """
+                    )
+                ).mappings().all()
 
-        return [market_by_ticker[ticker] for ticker in sorted(market_by_ticker)]
+                for row in stock_rows:
+                    ticker = str(row["ticker"]).upper()
+                    market_by_ticker[ticker] = {
+                        "ticker": ticker,
+                        "company_name": str(row["company_name"]),
+                        "price": int(row["price"]),
+                    }
+
+            for ticker, default_stock in DEFAULT_MARKET_DATA.items():
+                market_by_ticker.setdefault(
+                    ticker,
+                    {
+                        "ticker": ticker,
+                        "company_name": str(default_stock["company_name"]),
+                        "price": int(default_stock["price"]),
+                    },
+                )
+
+    except SQLAlchemyError as e:
+        raise HTTPException(status_code=503, detail="Database unavailable") from e
+
+    return [market_by_ticker[ticker] for ticker in sorted(market_by_ticker)]
 
 
 @router.get("/stocks/{ticker}", response_model=StockResponse, tags=["stocks"])
@@ -425,7 +494,7 @@ def post_orders_buy_confirm(req: BuyConfirmRequest):
         stock_row = connection.execute(
             sqlalchemy.text(
                 """
-                SELECT stock_id, stock_name
+                SELECT stock_id, stock_name, price
                 FROM asset_table
                 WHERE stock_id = :stock_id
                 """
@@ -496,8 +565,8 @@ def post_orders_buy_confirm(req: BuyConfirmRequest):
         connection.execute(
             sqlalchemy.text(
                 """
-                INSERT INTO transaction_table (portfolio_id, stock_id, quantity, portfolio_name)
-                VALUES (:portfolio_id, :stock_id, :quantity, :portfolio_name)
+                INSERT INTO transaction_table (portfolio_id, stock_id, quantity, portfolio_name,price_at_purchase)
+                VALUES (:portfolio_id, :stock_id, :quantity, :portfolio_name, :price_at_purchase)
                 """
             ),
             {
@@ -505,6 +574,7 @@ def post_orders_buy_confirm(req: BuyConfirmRequest):
                 "stock_id": req.stock_id,
                 "quantity": req.quantity,
                 "portfolio_name": portfolio_row["portfolio_name"],
+                "price_at_purchase": stock_row["price"],
             },
         )
 
@@ -688,38 +758,6 @@ def create_Stock_plan(
     # return an empty list
     return []
 
-def create_account(
-    name: str,
-    email: str,
-    ):
-    # Check if account with email already exists in the database
-    with db.engine.begin() as connection:
-        existing_account = connection.execute(
-            sqlalchemy.text(
-                """
-                SELECT id
-                FROM user_table
-                WHERE email = :email
-                """
-            ),
-            {"email": email},
-        ).mappings().one_or_none()
-
-        if existing_account is not None:
-            return False
-
-        connection.execute(
-            sqlalchemy.text(
-                """
-                INSERT INTO user_table (name, email)
-                VALUES (:name, :email)
-                """
-            ),
-            {"name": name, "email": email},
-        )
-
-    # return true if account creation is successful, false otherwise
-    return True
 
 
 @router.post("/stocks/plan", response_model=List[StockOrder], tags=["stocks"])
@@ -733,3 +771,86 @@ def get_wholesale_purchase_plan(wholesale_catalog: List[Stock]):
     return create_Stock_plan(
         wholesale_catalog=wholesale_catalog,
     )
+
+
+
+
+@router.get("/portfolio/{portfolio_id}/performance", response_model=PortfolioPerformance, tags=["portfolio"])
+def get_portfolio_performance(portfolio_id: int):
+    """Return the performance of a portfolio including total invested, current value, total return percentage, and performance of each holding.
+    """
+    with db.engine.begin() as connection:
+        ensure_portfolio_exists(connection, portfolio_id)
+        
+
+        history = connection.execute(sqlalchemy.text(
+            """
+            SELECT 
+            t.stock_id,
+            sum(t.quantity *t.price_at_purchase) as total_invested,
+            sum(t.quantity) as total_shares
+            FROM transaction_table t
+            JOIN asset_table a ON a.stock_id = t.stock_id
+            WHERE t.portfolio_id = :portfolio_id
+            and t.quantity > 0
+            GROUP BY t.stock_id
+            """),
+            {"portfolio_id": portfolio_id},
+        ).mappings().all()
+
+        current_holdings = connection.execute(sqlalchemy.text(
+            """
+            SELECT 
+            h.stock_id,
+            a.stock_name,
+            h.quantity,
+            a.price
+            FROM holdings_table h
+            JOIN asset_table a ON a.stock_id = h.stock_id
+            WHERE h.portfolio_id = :portfolio_id
+            """),
+            {"portfolio_id": portfolio_id},
+        ).mappings().all()
+
+        history_by_stock_id = {row["stock_id"]: row for row in history}
+        holding_list = []
+        current_value = 0.0
+        total_invested = 0.0
+
+        for row in current_holdings:
+            stock_id = row["stock_id"]
+            hist = history_by_stock_id.get(stock_id)
+            if hist is None:
+                continue
+            avg_cost = hist["total_invested"] / hist["total_shares"]
+            potential_gain_or_loss = (row["price"] - avg_cost) * row["quantity"]
+            return_percentage = (potential_gain_or_loss / hist["total_invested"]) * 100 if hist["total_invested"] > 0 else 0
+            total_invested += hist["total_invested"]
+            current_value += row["price"] * row["quantity"]
+            
+
+            holding_list.append({
+                
+                "ticker": str(row["stock_name"]).upper(),
+                "quantity": int(row["quantity"]),
+                "average_cost": avg_cost,
+                "current_price": int(row["price"]),
+                "potential_gains_or_losses": round(potential_gain_or_loss, 2),
+                "return_percentage": round(return_percentage, 2),
+                })
+        
+        total_return_percentage = ((current_value - total_invested) / total_invested) * 100 if total_invested > 0 else 0
+        
+        return {
+            "portfolio_id": portfolio_id,
+            "total_invested": round(total_invested, 2),
+            "current_value": round(current_value, 2),
+            "total_return_percentage": round(total_return_percentage, 2),
+            "holdings_performance": holding_list,
+            }
+
+
+      
+       
+
+
