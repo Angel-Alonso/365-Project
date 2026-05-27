@@ -6,3 +6,4 @@ __pycache__
 default.env
 info.log
 .DS_Store
+default.env
